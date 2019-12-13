@@ -16,13 +16,13 @@ Given a BaT car category text or the full URL to such category, sort it by sold/
 
 E.g.,
 ```
-(py3) python ./trend.py -u https://bringatrailer.com/cadillac/cts-v/
+(py3) > python ./trend.py -u https://bringatrailer.com/cadillac/cts-v/
 Downloaded https://bringatrailer.com/cadillac/cts-v/
 Done: ./cts-v.csv
 ```
 Running the same command again, will read from cache instead of hitting BaT again:
 ```
-> python ./trend.py -u https://bringatrailer.com/cadillac/cts-v/
+(py3) > python ./trend.py -u https://bringatrailer.com/cadillac/cts-v/
 Reading from cache /var/folders/qg/8qfb3sy12hq_jl3qhlnk43pc0000gn/T/cts-v.html ...
 Done: ./cts-v.csv
 

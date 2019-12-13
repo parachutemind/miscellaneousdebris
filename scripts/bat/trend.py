@@ -29,7 +29,7 @@ def main():
     action = parser.add_mutually_exclusive_group(required=True)
     action.add_argument('-f', type=str, dest='folder', help='name of folder in BaT or search term')
     action.add_argument('-u', type=str, dest='url', help="full url to page with information")
-    parser.add_argument('-o', type=str, dest='output_file', help='output CSV file')
+    parser.add_argument('-o', type=str, dest='output_file', help='(optional) output CSV file')
 
     args = parser.parse_args()
     url = None
@@ -78,22 +78,25 @@ def main():
     result = soup.findAll("div", {"class": "chart"})
     data_stats = result[0].attrs['data-stats']
     root = json.loads(data_stats)
-    data_points = root['s']
+    # 's' is for sold, 'u' is for not sold, i will just use the 'titlesub' later to differentiate the 2. 
+    # TODO: change this later to use the 's' and 'u' correctly 
+    sold = root['s']
+    not_sold = root['u']
     # convert the json into Panda's handy DataFrame object for manipulation and
     # CSV serialization
-    df = pd.io.json.json_normalize(data_points, max_level=1)
-    # we only care about amount, timestamp, title, titlesub and url
-    # titlesub tells us if the vehicle sold or not.
-    df.drop(labels=['image', 'timestampms'], axis=1, inplace=True)
+    df = pd.io.json.json_normalize(sold, max_level=1)
+    df = df.append(pd.io.json.json_normalize(not_sold, max_level=1))
 
     # epoch to date
-    # time.strftime('%Y-%m-%d', time.localtime(timestamp))
     df['timestamp'] = pd.to_datetime(df['timestamp'], unit='s')
     df['timestamp'] = df['timestamp'].dt.strftime('%m-%d-%Y')
 
     # add the "sold" column based on the titlesub string
     df.insert(0, 'sold', None)
     df['sold'] = df.apply(lambda row: parse_titlesub(row['titlesub']), axis=1)
+    # we only care about amount, timestamp, title and url
+    # titlesub tells us if the vehicle sold or not.
+    df.drop(labels=['image', 'timestampms', 'titlesub'], axis=1, inplace=True)
     
     # finally, sort the sucker
     df = df.sort_values(['amount'], ascending=[True])

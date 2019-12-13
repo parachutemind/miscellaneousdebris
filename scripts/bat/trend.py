@@ -95,7 +95,6 @@ def main():
     df.insert(0, 'sold', None)
     df['sold'] = df.apply(lambda row: parse_titlesub(row['titlesub']), axis=1)
     # we only care about amount, timestamp, title and url
-    # titlesub tells us if the vehicle sold or not.
     df.drop(labels=['image', 'timestampms', 'titlesub'], axis=1, inplace=True)
     
     # finally, sort the sucker

@@ -1,7 +1,8 @@
 # miscellaneousdebris
 A mix bag of scripts and tools
 
-#### scripts/bat
+## scripts/bat
+#### trend.py
 Given a BaT car category text or the full URL to such category, sort it by sold/not sold price and generate a CSV file.
 
 - Install (requires Python >= 3)

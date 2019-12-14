@@ -4,6 +4,7 @@ import sys
 import tempfile
 import os
 import json
+import time
 import pandas as pd
 import plotly.express as px
 
@@ -11,10 +12,13 @@ from argparse import ArgumentParser
 from urllib import parse
 from bs4 import BeautifulSoup
 
-bat_url_root = 'https://bringatrailer.com'
+BAT_URL_ROOT = 'https://bringatrailer.com'
+DEFAULT_WAIT_INTERVAL_SECS = 30
 
 sort = {'a': 'amount', 'd': 'timestamp', 's': 'sold'}
 
+def isHttpOk(status):
+    return status == 200 or status == 304
 
 def cache_response(file_name, content):
     try:
@@ -25,86 +29,127 @@ def cache_response(file_name, content):
 
     return True
 
-
 def parse_titlesub(titlesub):
+    """
+    quick and dirty way to know if a listing sold or not
+    """
     return "Y" if (titlesub.lower().startswith("sold for")) else "N"
 
-
-def plot_data(file):
+def plot_data(file, show_essentials=True):
     """
     Uses plotly to make pretty graphics and opens in a web browser: https://plot.ly/python/plot-data-from-csv/
     Defaults to color based on sold/not sold
     """
     csv = pd.read_csv(file)
+    hover_data = []
+    if show_essentials:
+        hover_data = ['essentials']
+
     figure = px.scatter(csv, x='timestamp', y='amount', title="price over time",
-                        hover_data=['essentials'], color="sold")
+                        hover_data=hover_data, color="sold")
     figure.show()
 
-
-def get_listing_essentials(url):
+def get_listing_essentials(html_doc):
     """
-    Get the BaT "listing essentials" from an auction URL. This includes the mileage and mods that are included
+    Get the BaT "listing essentials" from an auction page. This includes the mileage and mods that are included
     in the sidebar for each auction.
-
-    Warning: This can take a while to run on large csvs since it makes each web request in serial
     """
-    print('Getting listing essentials for: {}'.format(url))
-    doc = requests.get(url).text
-    p_doc = BeautifulSoup(doc, "html.parser")
-    essentials = p_doc.findAll("div", {"class": "listing-essentials"})
+    soup = BeautifulSoup(html_doc, "html.parser")
+    essentials = soup.findAll("div", {"class": "listing-essentials"})
     # newline delimiter substitution so that plotly will render properly
     text = essentials[0].text.replace('\n', '<br />')
     return text
 
-
-def main():
-    parser = ArgumentParser(description='BaT price trend')
-    action = parser.add_mutually_exclusive_group(required=True)
-    action.add_argument('-f', type=str, dest='folder', help='name of folder in BaT or search term')
-    action.add_argument('-u', type=str, dest='url', help="full url to page with information")
-    parser.add_argument('-o', type=str, dest='output_file', help='(optional) output CSV file')
-    parser.add_argument('-s', type=str, dest='sort_type',
-                        help='(optional) sort by (a)mount(default), (d)ate, (s)old/not sold')
-
-    args = parser.parse_args()
-    url = None
-    category = args.folder
-    if args.url:
-        url = args.url
-        category = os.path.basename(os.path.normpath(parse.urlparse(url).path))
-    else:
-        url = f'{bat_url_root}/{category}'
-    
-    output_file = args.output_file
-    if not output_file:
-        output_file = f'./{category}.csv'
-
-    cache_file = f'{tempfile.gettempdir()}/{category}.html'
+def download_content(url, root_dir):
     html_doc = None
+    page_name = os.path.basename(os.path.normpath(parse.urlparse(url).path))
+    dir_name = os.path.dirname(os.path.normpath(parse.urlparse(url).path))
+    cache_dir = f'{root_dir}/{dir_name}'
+    os.makedirs(cache_dir, exist_ok=True) 
+    cache_file = f'{cache_dir}/{page_name}.html'
     try:
         with open(cache_file) as f:
             html_doc = f.read()
-            status_code = 200
+            # TODO: Be nice and implement proper caching so the server can return 304 in addition to our local cache
+            # and do away with the -f flag
+            status_code = 304 # overload it for now and return something else once we implement support for 304
             print(f'Reading from cache {cache_file} ...')
     except IOError:    
         status_code = -1
         while True:
+            # TODO: Be nice and implement proper caching so the server can return 302 in addition to our local cache
+            # and do away with the -f flag
             r = requests.get(url)
             status_code = r.status_code
             if status_code == 302:
                 url = r.headers['location']
             elif status_code == 200:
-                print(f'Downloaded {url}')
+                print(f'Downloaded {url}:{cache_file}')
                 html_doc = r.text
                 if not cache_response(cache_file, html_doc):
                     print(f'Failed to cache response to {cache_file}')
                 break
             else:
-                # TODO cache failures 
+                # TODO collect error stats, cache upto N failures and then try again? 
                 break
+    return status_code, html_doc
 
-    if status_code != 200:
-        print(f'Failed to download stats from {url} with code {status_code}')
+def follow_listings(df, wait, cache_dir):
+    """
+    Follow each auction listing and extract the "essentials" information from each page.
+
+    WARNING: download is done serialy. It will take time! If you like coffee, this function
+    is for you!
+    TODO: drink less coffee and serialize the downloading of listing while being mindful not
+    to hit BaT too hard.
+    """
+    # prep the data frame with the buckets for the information that will be extracted
+    # from each auction listing.
+    # TODO: df.insert(4, "year", None) "milage"    
+    # put "essentials" always as the last column to keep the csv somewhat nicely formatted
+    # for those using spreadsheet editors.
+    df.insert(len(df.columns), 'essentials', None)
+    for index, row in df.iterrows():
+        url = row['url']
+        res, html_doc = download_content(url, cache_dir)
+        if isHttpOk(res):
+            # extract information and add it to df.
+            df.loc[index, 'essentials'] = get_listing_essentials(html_doc)
+            pass
+        else:
+            # TODO count errors
+            pass
+        
+        if res == 200:
+            time.sleep(wait)
+
+def main():
+    parser = ArgumentParser(description='BaT price trend')
+    parser.add_argument('-u', type=str, dest='url', required=True, help="full url to page with information")
+    parser.add_argument('-o', type=str, dest='output_file', help='(optional) output CSV file')
+    parser.add_argument('-sort', type=str, dest='sort_type', help='(optional) sort by (a)mount(default), (d)ate, (s)old/not sold.')
+    parser.add_argument('-results-only', action='store_true', help="(optional) don't parse listings")
+    parser.add_argument('-force', action='store_true', dest='force_download', help="(optional) force download, don't use local cached files")
+    parser.add_argument('-wait', type=int, default=2, help=f'(optional) when following listings, wait specified seconds before hitting the next listing. Min and default is {DEFAULT_WAIT_INTERVAL_SECS}')
+
+    args = parser.parse_args()
+    if args.force_download:
+        print("-f NYI")
+        sys.exit(-1)
+
+    if args.wait < DEFAULT_WAIT_INTERVAL_SECS:
+        args.wait = DEFAULT_WAIT_INTERVAL_SECS
+
+    # TODO: turn all this into properties of a class that is then used within main... for now quick and dirty wins, sorry TDD ;)     
+    category = os.path.basename(os.path.normpath(parse.urlparse(args.url).path))
+    output_file = args.output_file
+    if not output_file:
+        output_file = f'./{category}.csv'
+    
+    cache_dir = tempfile.gettempdir()
+    status_code, html_doc = download_content(args.url, cache_dir)
+    if not isHttpOk(status_code):
+        print(f'Failed to download stats from {args.url} with code {status_code}')
         sys.exit(status_code)
 
     soup = BeautifulSoup(html_doc, 'html.parser') 
@@ -129,9 +174,9 @@ def main():
     df.insert(0, 'sold', None)
     df['sold'] = df.apply(lambda row: parse_titlesub(row['titlesub']), axis=1)
 
-    # add the listing essentials for each listing to be displayed in the plot hover
-    df.insert(0, 'essentials', None)
-    df['essentials'] = df.apply(lambda row: get_listing_essentials(row['url']), axis=1)
+    # add the listing essentials for each listing
+    if not args.results_only:
+        follow_listings(df, args.wait, cache_dir)
 
     # we only care about amount, timestamp, title and url
     df.drop(labels=['image', 'timestampms', 'titlesub'], axis=1, inplace=True)
@@ -144,7 +189,7 @@ def main():
 
     # outout to csv file        
     df.to_csv(output_file)
-    plot_data(output_file)
+    plot_data(output_file, not args.results_only)
     print(f'Done: {output_file}')
 
 

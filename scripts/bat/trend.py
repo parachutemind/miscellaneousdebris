@@ -1,17 +1,24 @@
+import aiohttp
 import requests
 import sys
 import tempfile
 import os
 import json
-import pandas as pd
 import time
+import pandas as pd
+import plotly.express as px
 
 from argparse import ArgumentParser 
 from urllib import parse
 from bs4 import BeautifulSoup
 
 BAT_URL_ROOT = 'https://bringatrailer.com'
-DEFAULT_WAIT_INTERVAL_SECS = 30
+DEFAULT_WAIT_INTERVAL_SECS = 5
+
+sort = {'a': 'amount', 'd': 'timestamp', 's': 'sold'}
+
+def isHttpOk(status):
+    return status == 200 or status == 304
 
 def cache_response(file_name, content):
     try:
@@ -21,6 +28,37 @@ def cache_response(file_name, content):
         return False
 
     return True
+
+def parse_titlesub(titlesub):
+    """
+    quick and dirty way to know if a listing sold or not
+    """
+    return "Y" if (titlesub.lower().startswith("sold for")) else "N"
+
+def plot_data(file, show_essentials=True):
+    """
+    Uses plotly to make pretty graphics and opens in a web browser: https://plot.ly/python/plot-data-from-csv/
+    Defaults to color based on sold/not sold
+    """
+    csv = pd.read_csv(file)
+    hover_data = []
+    if show_essentials:
+        hover_data = ['essentials']
+
+    figure = px.scatter(csv, x='timestamp', y='amount', title="price over time",
+                        hover_data=hover_data, color="sold")
+    figure.show()
+
+def get_listing_essentials(html_doc):
+    """
+    Get the BaT "listing essentials" from an auction page. This includes the mileage and mods that are included
+    in the sidebar for each auction.
+    """
+    soup = BeautifulSoup(html_doc, "html.parser")
+    essentials = soup.findAll("div", {"class": "listing-essentials"})
+    # newline delimiter substitution so that plotly will render properly
+    text = essentials[0].text.replace('\n', '<br />')
+    return text
 
 def download_content(url, root_dir):
     html_doc = None
@@ -57,11 +95,26 @@ def download_content(url, root_dir):
     return status_code, html_doc
 
 def follow_listings(df, wait, cache_dir):
-    for _, row in df.iterrows():
+    """
+    Follow each auction listing and extract the "essentials" information from each page.
+
+    WARNING: download is done serialy. It will take time! If you like coffee, this function
+    is for you!
+    TODO: drink less coffee and serialize the downloading of listing while being mindful not
+    to hit BaT too hard.
+    """
+    # prep the data frame with the buckets for the information that will be extracted
+    # from each auction listing.
+    # TODO: df.insert(4, "year", None) "milage"    
+    # put "essentials" always as the last column to keep the csv somewhat nicely formatted
+    # for those using spreadsheet editors.
+    df.insert(len(df.columns), 'essentials', None)
+    for index, row in df.iterrows():
         url = row['url']
         res, html_doc = download_content(url, cache_dir)
         if isHttpOk(res):
             # extract information and add it to df.
+            df.loc[index, 'essentials'] = get_listing_essentials(html_doc)
             pass
         else:
             # TODO count errors
@@ -70,20 +123,14 @@ def follow_listings(df, wait, cache_dir):
         if res == 200:
             time.sleep(wait)
 
-def parse_titlesub(titlesub):
-    return "Y" if (titlesub.lower().startswith("sold for")) else "N"
-
-def isHttpOk(status):
-    return status == 200 or status == 304
-
 def main():
     parser = ArgumentParser(description='BaT price trend')
-    # action = parser.add_mutually_exclusive_group(required=True)
     parser.add_argument('-u', type=str, dest='url', required=True, help="full url to page with information")
     parser.add_argument('-o', type=str, dest='output_file', help='(optional) output CSV file')
-    parser.add_argument('-dont-follow', action='store_true', help="Don't follow listings to extract additional info")
-    parser.add_argument('-f', action='store_true', dest='force_download', help="Force download, don't use local cached files")
-    parser.add_argument('-wait', type=int, default=2, help=f'When following listings, wait specified seconds before hitting the next listing. Min and default is {DEFAULT_WAIT_INTERVAL_SECS}')
+    parser.add_argument('-sort', type=str, dest='sort_type', help='(optional) sort by (a)mount(default), (d)ate, (s)old/not sold.')
+    parser.add_argument('-results-only', action='store_true', help="(optional) don't parse listings")
+    parser.add_argument('-force', action='store_true', dest='force_download', help="(optional) force download, don't use local cached files")
+    parser.add_argument('-wait', type=int, default=2, help=f'(optional) when following listings, wait specified seconds before hitting the next listing. Min and default is {DEFAULT_WAIT_INTERVAL_SECS}')
 
     args = parser.parse_args()
     if args.force_download:
@@ -104,7 +151,7 @@ def main():
     if not isHttpOk(status_code):
         print(f'Failed to download stats from {args.url} with code {status_code}')
         sys.exit(status_code)
-    
+
     soup = BeautifulSoup(html_doc, 'html.parser') 
     # class="chart" attribute "data-stats" holds all the goodies
     result = soup.findAll("div", {"class": "chart"})
@@ -121,24 +168,30 @@ def main():
 
     # epoch to date
     df['timestamp'] = pd.to_datetime(df['timestamp'], unit='s')
-    df['timestamp'] = df['timestamp'].dt.strftime('%m-%d-%Y')
+    df['timestamp'] = df['timestamp'].dt.strftime('%Y-%m-%d')
 
     # add the "sold" column based on the titlesub string
     df.insert(0, 'sold', None)
-    df.insert(4, 'year', None)
     df['sold'] = df.apply(lambda row: parse_titlesub(row['titlesub']), axis=1)
+
+    # add the listing essentials for each listing
+    if not args.results_only:
+        follow_listings(df, args.wait, cache_dir)
+
     # we only care about amount, timestamp, title and url
     df.drop(labels=['image', 'timestampms', 'titlesub'], axis=1, inplace=True)
     
     # finally, sort the sucker
-    df = df.sort_values(['amount'], ascending=[True])
-
-    if not args.dont_follow:
-        follow_listings(df, args.wait, cache_dir)
+    if args.sort_type:
+        df = df.sort_values([sort[args.sort_type]], ascending=[True])
+    else:
+        df = df.sort_values(['amount'], ascending=[True])
 
     # outout to csv file        
     df.to_csv(output_file)
+    plot_data(output_file, not args.results_only)
     print(f'Done: {output_file}')
+
 
 if __name__ == "__main__":
     main()

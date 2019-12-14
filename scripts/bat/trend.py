@@ -5,6 +5,7 @@ import tempfile
 import os
 import json
 import time
+import re
 import pandas as pd
 import plotly.express as px
 
@@ -16,6 +17,15 @@ BAT_URL_ROOT = 'https://bringatrailer.com'
 DEFAULT_WAIT_INTERVAL_SECS = 5
 
 sort = {'a': 'amount', 'd': 'timestamp', 's': 'sold'}
+
+# Thousand miles matcher
+kmiles_matcher = re.compile("[0-9]+k", re.IGNORECASE)
+
+CN_TRANS  = "transmission"
+CN_VIN    = "VIN"
+CN_LOC    = "location"
+CN_YEAR   = "year"
+CN_MILAGE = "milage"
 
 def isHttpOk(status):
     return status == 200 or status == 304
@@ -35,6 +45,16 @@ def parse_titlesub(titlesub):
     """
     return "Y" if (titlesub.lower().startswith("sold for")) else "N"
 
+def parse_milage(milage):
+    """
+    Extract milage int from things like "25,000 Miles" or "24k Miles" strings
+    """
+    val = int(''.join(filter(str.isdigit, milage)))
+    if kmiles_matcher.match(milage):
+        val *= 1000
+    return val  
+
+
 def plot_data(file, title, show_essentials=True):
     """
     Uses plotly to make pretty graphics and opens in a web browser: https://plot.ly/python/plot-data-from-csv/
@@ -49,16 +69,45 @@ def plot_data(file, title, show_essentials=True):
                         hover_data=hover_data, color="sold")
     figure.show()
 
+def sanitize_essential_item(val, word_to_remove):
+    """
+    Helper to remove the word_to_remove and strip, whitespaces, newlines etc..
+    """
+    clean_re = re.compile(re.escape(word_to_remove), re.IGNORECASE)
+    return clean_re.sub('', val).strip(' \t\n\r')
+
 def get_listing_essentials(html_doc):
     """
     Get the BaT "listing essentials" from an auction page. This includes the mileage and mods that are included
     in the sidebar for each auction.
+    Args:
+        html_doc (str): BaT auction listing HTML doc
+
+    Returns:
+        dictionary with following fields: "essentials", "milage", "transmission", "loc", "VIN"
     """
+    result = {}
     soup = BeautifulSoup(html_doc, "html.parser")
-    essentials = soup.findAll("div", {"class": "listing-essentials"})
+    essentials_div = soup.findAll("div", {"class": "listing-essentials"})
     # newline delimiter substitution so that plotly will render properly
-    text = essentials[0].text.replace('\n', '<br />')
-    return text
+    result['essentials'] = essentials_div[0].text.replace('\n', '<br />')
+    
+    # listing-essentials-item
+    essentials_items = soup.findAll("li",{"class": "listing-essentials-item"})
+    keys = [[CN_TRANS, CN_TRANS], ["chassis:", CN_VIN], ["location:", CN_LOC]]
+    for item in essentials_items:
+        val = item.text.lower()
+        # milage is special
+        if "miles" in val:
+            result[CN_MILAGE] = parse_milage(item.text)
+        else:
+            # other items can be generalized in a loop...
+            for sk in keys:
+                search_term = sk[0]
+                key = sk[1]
+                if search_term in val:
+                    result[key] = sanitize_essential_item(item.text, search_term) 
+    return result
 
 def download_content(url, root_dir):
     html_doc = None
@@ -105,7 +154,13 @@ def follow_listings(df, wait, cache_dir):
     """
     # prep the data frame with the buckets for the information that will be extracted
     # from each auction listing.
-    # TODO: df.insert(4, "year", None) "milage"    
+    # df.insert(5, CN_YEAR, None) # TODO - this comes from the title of the results, not the lisiting.
+    new_cols = [CN_MILAGE, CN_TRANS, CN_VIN, CN_LOC]
+    start_index = 6
+    for col in new_cols:
+        df.insert(start_index, col, None)
+        start_index += 1
+
     # put "essentials" always as the last column to keep the csv somewhat nicely formatted
     # for those using spreadsheet editors.
     df.insert(len(df.columns), 'essentials', None)
@@ -114,8 +169,11 @@ def follow_listings(df, wait, cache_dir):
         res, html_doc = download_content(url, cache_dir)
         if isHttpOk(res):
             # extract information and add it to df.
-            df.loc[index, 'essentials'] = get_listing_essentials(html_doc)
-            pass
+            listing_info = get_listing_essentials(html_doc)
+            df.loc[index, 'essentials'] = listing_info['essentials']
+            for col in new_cols:
+                if col in listing_info:
+                    df.loc[index, col] = listing_info[col]
         else:
             # TODO count errors
             pass

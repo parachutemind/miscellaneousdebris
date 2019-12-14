@@ -13,7 +13,7 @@ from urllib import parse
 from bs4 import BeautifulSoup
 
 BAT_URL_ROOT = 'https://bringatrailer.com'
-DEFAULT_WAIT_INTERVAL_SECS = 30
+DEFAULT_WAIT_INTERVAL_SECS = 5
 
 sort = {'a': 'amount', 'd': 'timestamp', 's': 'sold'}
 

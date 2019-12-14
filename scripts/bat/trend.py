@@ -35,7 +35,7 @@ def parse_titlesub(titlesub):
     """
     return "Y" if (titlesub.lower().startswith("sold for")) else "N"
 
-def plot_data(file, show_essentials=True):
+def plot_data(file, title, show_essentials=True):
     """
     Uses plotly to make pretty graphics and opens in a web browser: https://plot.ly/python/plot-data-from-csv/
     Defaults to color based on sold/not sold
@@ -45,7 +45,7 @@ def plot_data(file, show_essentials=True):
     if show_essentials:
         hover_data = ['essentials']
 
-    figure = px.scatter(csv, x='timestamp', y='amount', title="price over time",
+    figure = px.scatter(csv, x='timestamp', y='amount', title=f"price over time - {title}",
                         hover_data=hover_data, color="sold")
     figure.show()
 
@@ -153,6 +153,7 @@ def main():
         sys.exit(status_code)
 
     soup = BeautifulSoup(html_doc, 'html.parser') 
+    category_title = soup.title.text.strip(' \t\n\r')
     # class="chart" attribute "data-stats" holds all the goodies
     result = soup.findAll("div", {"class": "chart"})
     data_stats = result[0].attrs['data-stats']
@@ -189,7 +190,7 @@ def main():
 
     # outout to csv file        
     df.to_csv(output_file)
-    plot_data(output_file, not args.results_only)
+    plot_data(output_file, title=category_title, show_essentials=not args.results_only)
     print(f'Done: {output_file}')
 
 

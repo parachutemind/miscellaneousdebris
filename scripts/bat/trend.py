@@ -23,7 +23,9 @@ DEFAULT_WAIT_INTERVAL_SECS = 5
 sort = {'a': 'amount', 'd': 'timestamp', 's': 'sold'}
 
 # Thousand miles matcher
-kmiles_matcher = re.compile("[0-9]+k", re.IGNORECASE)
+# kmiles_matcher = re.compile("[0-9]+k", re.IGNORECASE)
+kmiles_matcher = re.compile("[0-9]+k \w*[ ]*miles", re.IGNORECASE)
+miles_matcher = re.compile("[0-9,]+ \w*[ ]*miles", re.IGNORECASE)
 
 CN_TRANS  = "transmission"
 CN_VIN    = "VIN"
@@ -52,10 +54,26 @@ def parse_titlesub(titlesub):
 def parse_milage(milage):
     """
     Extract milage int from things like "25,000 Miles" or "24k Miles" strings
+    E.g.,
+        '7,200 Kilometers (~4,500 Miles)'
+        '12k Miles'
+        '55,086 Kilometers (~34k Miles)'
+        '14,820 Miles'
+        '33k Indicated Miles'
+        '68k Kilometers Shown (~42k Miles)'
+        '7,200 Kilometers (~4,500 Miles)'
     """
-    val = int(''.join(filter(str.isdigit, milage)))
-    if kmiles_matcher.match(milage):
+    match = kmiles_matcher.search(milage)
+    if match:
+        val = int(''.join(filter(str.isdigit, match.group())))
         val *= 1000
+    else:
+        match = miles_matcher.search(milage)
+        if match:
+            val = int(''.join(filter(str.isdigit, match.group())))
+        else:
+            val = int(''.join(filter(str.isdigit, milage)))
+
     return val  
 
 
@@ -186,10 +204,12 @@ def get_listing_essentials(html_doc):
     # listing-essentials-item
     essentials_items = soup.findAll("li",{"class": "listing-essentials-item"})
     keys = [[CN_TRANS, CN_TRANS], ["chassis:", CN_VIN], ["location:", CN_LOC]]
+    miles_found = False
     for item in essentials_items:
         val = item.text.lower()
         # milage is special
-        if "miles" in val:
+        if "miles" in val and not miles_found:
+            miles_found = True # this guards against false positives further down items list.
             result[CN_MILAGE] = parse_milage(item.text)
         else:
             # other items can be generalized in a loop...

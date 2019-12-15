@@ -22,8 +22,16 @@ DEFAULT_WAIT_INTERVAL_SECS = 5
 
 sort = {'a': 'amount', 'd': 'timestamp', 's': 'sold'}
 
-# Thousand miles matcher
-# kmiles_matcher = re.compile("[0-9]+k", re.IGNORECASE)
+# Miles matcher
+#  E.g.,
+#         '7,200 Kilometers (~4,500 Miles)'
+#         '12k Miles'
+#         '55,086 Kilometers (~34k Miles)'
+#         '14,820 Miles'
+#         '33k Indicated Miles'
+#         '68k Kilometers Shown (~42k Miles)'
+#         '7,200 Kilometers (~4,500 Miles)'
+# unit test anybody? nah!
 kmiles_matcher = re.compile("[0-9]+k \w*[ ]*miles", re.IGNORECASE)
 miles_matcher = re.compile("[0-9,]+ \w*[ ]*miles", re.IGNORECASE)
 
@@ -54,14 +62,7 @@ def parse_titlesub(titlesub):
 def parse_milage(milage):
     """
     Extract milage int from things like "25,000 Miles" or "24k Miles" strings
-    E.g.,
-        '7,200 Kilometers (~4,500 Miles)'
-        '12k Miles'
-        '55,086 Kilometers (~34k Miles)'
-        '14,820 Miles'
-        '33k Indicated Miles'
-        '68k Kilometers Shown (~42k Miles)'
-        '7,200 Kilometers (~4,500 Miles)'
+   
     """
     match = kmiles_matcher.search(milage)
     if match:

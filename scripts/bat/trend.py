@@ -178,7 +178,8 @@ def plot_data(file, title, show_essentials=True):
     fig.update_layout(title_text=f'{title}', 
                       showlegend=True,
                       legend=make_legend())
-    fig.show()    
+    
+    fig.show()   
 
 def make_legend():
     """
@@ -197,12 +198,13 @@ def sanitize_essential_item(val, word_to_remove):
     clean_re = re.compile(re.escape(word_to_remove), re.IGNORECASE)
     return clean_re.sub('', val).strip(' \t\n\r')
 
-def get_listing_essentials(html_doc):
+def get_listing_essentials(html_doc, row):
     """
     Get the BaT "listing essentials" from an auction page. This includes the mileage and mods that are included
     in the sidebar for each auction.
     Args:
         html_doc (str): BaT auction listing HTML doc
+        row (obj): dataframe row with additional information
 
     Returns:
         dictionary with following fields: "essentials", "milage", "transmission", "loc", "VIN"
@@ -211,7 +213,8 @@ def get_listing_essentials(html_doc):
     soup = BeautifulSoup(html_doc, "html.parser")
     essentials_div = soup.findAll("div", {"class": "listing-essentials"})
     # newline delimiter substitution so that plotly will render properly
-    result['essentials'] = essentials_div[0].text.replace('\n', '<br />')
+    essentials_text = f"{row['title']}<br />{row['titlesub']}<br />"
+    result['essentials'] = essentials_text + essentials_div[0].text.replace('\n', '<br />')
     
     # listing-essentials-item
     essentials_items = soup.findAll("li",{"class": "listing-essentials-item"})
@@ -292,7 +295,7 @@ def follow_listings(df, wait, cache_dir):
         res, html_doc = download_content(url, cache_dir)
         if isHttpOk(res):
             # extract information and add it to df.
-            listing_info = get_listing_essentials(html_doc)
+            listing_info = get_listing_essentials(html_doc, row)
             df.loc[index, 'essentials'] = listing_info['essentials']
             for col in new_cols:
                 if col in listing_info:

@@ -169,15 +169,26 @@ def plot_data(file, title, show_essentials=True):
             legendgroup='not-sold', showlegend=True, name='Not Sold'))
 
     # x-axis labels 
-    fig.update_xaxes(title_text="Date", row=1, col=1)
-    fig.update_xaxes(title_text="Milage", row=1, col=2)
+    fig.update_xaxes(title_text="Date", row=1, col=1, showspikes=True)
+    fig.update_xaxes(title_text="Milage", row=1, col=2,showspikes=True)
     # y-axis labels
-    fig.update_yaxes(title_text="Price", row=1, col=1)
-    fig.update_yaxes(title_text="Price", row=1, col=2)
-
+    fig.update_yaxes(title_text="Price", row=1, col=1, showspikes=True)
+    fig.update_yaxes(title_text="Price", row=1, col=2, showspikes=True)
+    
     fig.update_layout(title_text=f'{title}', 
-                      showlegend=True)
+                      showlegend=True,
+                      legend=make_legend())
     fig.show()    
+
+def make_legend():
+    """
+    Customize the legend style and position
+    """
+    return go.layout.Legend(
+        traceorder="normal",
+        bordercolor="Black",
+        borderwidth=1
+    )
 
 def sanitize_essential_item(val, word_to_remove):
     """

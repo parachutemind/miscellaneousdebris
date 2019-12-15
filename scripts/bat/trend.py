@@ -9,6 +9,10 @@ import re
 import pandas as pd
 import plotly.express as px
 
+import plotly.graph_objs as go
+import plotly.offline as po
+
+from plotly.subplots import make_subplots
 from argparse import ArgumentParser 
 from urllib import parse
 from bs4 import BeautifulSoup
@@ -64,10 +68,97 @@ def plot_data(file, title, show_essentials=True):
     hover_data = []
     if show_essentials:
         hover_data = ['essentials']
+    
+    # Some good examples,
+    # https://community.plot.ly/t/add-custom-legend-markers-color-to-plotly-python/19635/2
+    # Conditional coloring of marker (not used here, but good for reference):
+    #     marker=dict(
+    #       color=(csv['sold'] == 'Y').astype('int'),
+    #       colorscale=[[0, '#F7654E'], [1, '#068FF7']]
+    #     )
 
-    figure = px.scatter(csv, x='timestamp', y='amount', title=f"price over time - {title}",
-                        hover_data=hover_data, color="sold")
-    figure.show()
+    fig = make_subplots(rows=1, 
+        cols=2,
+        subplot_titles=("Price Over Time", "Price and Milage"))
+
+    sold = csv.loc[csv.sold == 'Y']
+    not_sold = csv.loc[csv.sold == 'N']
+    fig.add_trace(
+        go.Scatter(x=sold['timestamp'], y=sold['amount'],
+            mode="markers",
+            marker=dict(
+                color='#068FF7'
+            ),
+            showlegend=False,
+            hoverinfo='text',
+            hovertext=sold['essentials'],
+            legendgroup='sold'
+        ),
+        row=1, col=1
+    )
+
+    fig.add_trace(
+        go.Scatter(x=not_sold['timestamp'], y=not_sold['amount'],
+            mode="markers",
+            marker=dict(
+                color='#F7654E'
+            ),
+            showlegend=False,
+            hoverinfo='text',
+            hovertext=not_sold['essentials'],
+            legendgroup='not-sold'
+        ),
+        row=1, col=1
+    )
+
+    fig.add_trace(
+        go.Scatter(x=sold['milage'], y=sold['amount'],
+            mode="markers",
+            marker=dict(
+                color='#068FF7'
+            ),
+            showlegend=False,
+            hoverinfo='text',
+            hovertext=sold['essentials'],
+            legendgroup='sold'
+        ),        
+        row=1, col=2
+    )
+
+    fig.add_trace(
+        go.Scatter(x=not_sold['milage'], y=not_sold['amount'],
+            mode="markers",
+            marker=dict(
+                color='#F7654E'
+            ),
+            showlegend=False,
+            hoverinfo='text',
+            hovertext=not_sold['essentials'],
+            legendgroup='not-sold'
+        ),        
+        row=1, col=2
+    )
+
+    # trick to sync hidding sold/not-sold on both sub-plots
+    fig.add_trace(
+        go.Scatter(x=[None], y=[None], mode='markers',
+            marker=dict(size=10, color='#068FF7'),
+            legendgroup='sold', showlegend=True, name='Sold'))
+    fig.add_trace(
+        go.Scatter(x=[None], y=[None], mode='markers',
+            marker=dict(size=10, color='#F7654E'),
+            legendgroup='not-sold', showlegend=True, name='Not Sold'))
+
+    # x-axis labels 
+    fig.update_xaxes(title_text="Date", row=1, col=1)
+    fig.update_xaxes(title_text="Milage", row=1, col=2)
+    # y-axis labels
+    fig.update_yaxes(title_text="Price", row=1, col=1)
+    fig.update_yaxes(title_text="Price", row=1, col=2)
+
+    fig.update_layout(title_text=f'{title}', 
+                      showlegend=True)
+    fig.show()    
 
 def sanitize_essential_item(val, word_to_remove):
     """
@@ -183,7 +274,9 @@ def follow_listings(df, wait, cache_dir):
 
 def main():
     parser = ArgumentParser(description='BaT price trend')
-    parser.add_argument('-u', type=str, dest='url', required=True, help="full url to page with information")
+    action = parser.add_mutually_exclusive_group(required=True)
+    action.add_argument('-u', type=str, dest='url', help="full url to page with information")
+    action.add_argument('-p', type=str, dest='csv_file', help="only plot the provided csv file")
     parser.add_argument('-o', type=str, dest='output_file', help='(optional) output CSV file')
     parser.add_argument('-sort', type=str, dest='sort_type', help='(optional) sort by (a)mount(default), (d)ate, (s)old/not sold.')
     parser.add_argument('-results-only', action='store_true', help="(optional) don't parse listings")
@@ -194,6 +287,11 @@ def main():
     if args.force_download:
         print("-f NYI")
         sys.exit(-1)
+
+    if args.csv_file:
+        # only plotting.
+        plot_data(args.csv_file, title=args.csv_file, show_essentials=not args.results_only)
+        sys.exit(0)
 
     if args.wait < DEFAULT_WAIT_INTERVAL_SECS:
         args.wait = DEFAULT_WAIT_INTERVAL_SECS

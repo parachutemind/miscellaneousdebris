@@ -5,9 +5,14 @@ import tempfile
 import os
 import json
 import time
+import re
 import pandas as pd
 import plotly.express as px
 
+import plotly.graph_objs as go
+import plotly.offline as po
+
+from plotly.subplots import make_subplots
 from argparse import ArgumentParser 
 from urllib import parse
 from bs4 import BeautifulSoup
@@ -16,6 +21,25 @@ BAT_URL_ROOT = 'https://bringatrailer.com'
 DEFAULT_WAIT_INTERVAL_SECS = 5
 
 sort = {'a': 'amount', 'd': 'timestamp', 's': 'sold'}
+
+# Miles matcher
+#  E.g.,
+#         '7,200 Kilometers (~4,500 Miles)'
+#         '12k Miles'
+#         '55,086 Kilometers (~34k Miles)'
+#         '14,820 Miles'
+#         '33k Indicated Miles'
+#         '68k Kilometers Shown (~42k Miles)'
+#         '7,200 Kilometers (~4,500 Miles)'
+# unit test anybody? nah!
+kmiles_matcher = re.compile("[0-9]+k \w*[ ]*miles", re.IGNORECASE)
+miles_matcher = re.compile("[0-9,]+ \w*[ ]*miles", re.IGNORECASE)
+
+CN_TRANS  = "transmission"
+CN_VIN    = "VIN"
+CN_LOC    = "location"
+CN_YEAR   = "year"
+CN_MILAGE = "milage"
 
 def isHttpOk(status):
     return status == 200 or status == 304
@@ -35,7 +59,26 @@ def parse_titlesub(titlesub):
     """
     return "Y" if (titlesub.lower().startswith("sold for")) else "N"
 
-def plot_data(file, show_essentials=True):
+def parse_milage(milage):
+    """
+    Extract milage int from things like "25,000 Miles" or "24k Miles" strings
+   
+    """
+    match = kmiles_matcher.search(milage)
+    if match:
+        val = int(''.join(filter(str.isdigit, match.group())))
+        val *= 1000
+    else:
+        match = miles_matcher.search(milage)
+        if match:
+            val = int(''.join(filter(str.isdigit, match.group())))
+        else:
+            val = int(''.join(filter(str.isdigit, milage)))
+
+    return val  
+
+
+def plot_data(file, title, show_essentials=True):
     """
     Uses plotly to make pretty graphics and opens in a web browser: https://plot.ly/python/plot-data-from-csv/
     Defaults to color based on sold/not sold
@@ -44,21 +87,150 @@ def plot_data(file, show_essentials=True):
     hover_data = []
     if show_essentials:
         hover_data = ['essentials']
+    
+    # Some good examples,
+    # https://community.plot.ly/t/add-custom-legend-markers-color-to-plotly-python/19635/2
+    # Conditional coloring of marker (not used here, but good for reference):
+    #     marker=dict(
+    #       color=(csv['sold'] == 'Y').astype('int'),
+    #       colorscale=[[0, '#F7654E'], [1, '#068FF7']]
+    #     )
 
-    figure = px.scatter(csv, x='timestamp', y='amount', title="price over time",
-                        hover_data=hover_data, color="sold")
-    figure.show()
+    fig = make_subplots(rows=1, 
+        cols=2,
+        subplot_titles=("Price Over Time", "Price and Milage"))
+
+    sold = csv.loc[csv.sold == 'Y']
+    not_sold = csv.loc[csv.sold == 'N']
+    fig.add_trace(
+        go.Scatter(x=sold['timestamp'], y=sold['amount'],
+            mode="markers",
+            marker=dict(
+                color='#068FF7'
+            ),
+            showlegend=False,
+            hoverinfo='text',
+            hovertext=sold['essentials'],
+            legendgroup='sold'
+        ),
+        row=1, col=1
+    )
+
+    fig.add_trace(
+        go.Scatter(x=not_sold['timestamp'], y=not_sold['amount'],
+            mode="markers",
+            marker=dict(
+                color='#F7654E'
+            ),
+            showlegend=False,
+            hoverinfo='text',
+            hovertext=not_sold['essentials'],
+            legendgroup='not-sold'
+        ),
+        row=1, col=1
+    )
+
+    fig.add_trace(
+        go.Scatter(x=sold['milage'], y=sold['amount'],
+            mode="markers",
+            marker=dict(
+                color='#068FF7'
+            ),
+            showlegend=False,
+            hoverinfo='text',
+            hovertext=sold['essentials'],
+            legendgroup='sold'
+        ),        
+        row=1, col=2
+    )
+
+    fig.add_trace(
+        go.Scatter(x=not_sold['milage'], y=not_sold['amount'],
+            mode="markers",
+            marker=dict(
+                color='#F7654E'
+            ),
+            showlegend=False,
+            hoverinfo='text',
+            hovertext=not_sold['essentials'],
+            legendgroup='not-sold'
+        ),        
+        row=1, col=2
+    )
+
+    # trick to sync hidding sold/not-sold on both sub-plots
+    fig.add_trace(
+        go.Scatter(x=[None], y=[None], mode='markers',
+            marker=dict(size=10, color='#068FF7'),
+            legendgroup='sold', showlegend=True, name='Sold'))
+    fig.add_trace(
+        go.Scatter(x=[None], y=[None], mode='markers',
+            marker=dict(size=10, color='#F7654E'),
+            legendgroup='not-sold', showlegend=True, name='Not Sold'))
+
+    # x-axis labels 
+    fig.update_xaxes(title_text="Date", row=1, col=1, showspikes=True)
+    fig.update_xaxes(title_text="Milage", row=1, col=2,showspikes=True)
+    # y-axis labels
+    fig.update_yaxes(title_text="Price", row=1, col=1, showspikes=True)
+    fig.update_yaxes(title_text="Price", row=1, col=2, showspikes=True)
+    
+    fig.update_layout(title_text=f'{title}', 
+                      showlegend=True,
+                      legend=make_legend())
+    fig.show()    
+
+def make_legend():
+    """
+    Customize the legend style and position
+    """
+    return go.layout.Legend(
+        traceorder="normal",
+        bordercolor="Black",
+        borderwidth=1
+    )
+
+def sanitize_essential_item(val, word_to_remove):
+    """
+    Helper to remove the word_to_remove and strip, whitespaces, newlines etc..
+    """
+    clean_re = re.compile(re.escape(word_to_remove), re.IGNORECASE)
+    return clean_re.sub('', val).strip(' \t\n\r')
 
 def get_listing_essentials(html_doc):
     """
     Get the BaT "listing essentials" from an auction page. This includes the mileage and mods that are included
     in the sidebar for each auction.
+    Args:
+        html_doc (str): BaT auction listing HTML doc
+
+    Returns:
+        dictionary with following fields: "essentials", "milage", "transmission", "loc", "VIN"
     """
+    result = {}
     soup = BeautifulSoup(html_doc, "html.parser")
-    essentials = soup.findAll("div", {"class": "listing-essentials"})
+    essentials_div = soup.findAll("div", {"class": "listing-essentials"})
     # newline delimiter substitution so that plotly will render properly
-    text = essentials[0].text.replace('\n', '<br />')
-    return text
+    result['essentials'] = essentials_div[0].text.replace('\n', '<br />')
+    
+    # listing-essentials-item
+    essentials_items = soup.findAll("li",{"class": "listing-essentials-item"})
+    keys = [[CN_TRANS, CN_TRANS], ["chassis:", CN_VIN], ["location:", CN_LOC]]
+    miles_found = False
+    for item in essentials_items:
+        val = item.text.lower()
+        # milage is special
+        if "miles" in val and not miles_found:
+            miles_found = True # this guards against false positives further down items list.
+            result[CN_MILAGE] = parse_milage(item.text)
+        else:
+            # other items can be generalized in a loop...
+            for sk in keys:
+                search_term = sk[0]
+                key = sk[1]
+                if search_term in val:
+                    result[key] = sanitize_essential_item(item.text, search_term) 
+    return result
 
 def download_content(url, root_dir):
     html_doc = None
@@ -105,7 +277,13 @@ def follow_listings(df, wait, cache_dir):
     """
     # prep the data frame with the buckets for the information that will be extracted
     # from each auction listing.
-    # TODO: df.insert(4, "year", None) "milage"    
+    # df.insert(5, CN_YEAR, None) # TODO - this comes from the title of the results, not the lisiting.
+    new_cols = [CN_MILAGE, CN_TRANS, CN_VIN, CN_LOC]
+    start_index = 6
+    for col in new_cols:
+        df.insert(start_index, col, None)
+        start_index += 1
+
     # put "essentials" always as the last column to keep the csv somewhat nicely formatted
     # for those using spreadsheet editors.
     df.insert(len(df.columns), 'essentials', None)
@@ -114,8 +292,11 @@ def follow_listings(df, wait, cache_dir):
         res, html_doc = download_content(url, cache_dir)
         if isHttpOk(res):
             # extract information and add it to df.
-            df.loc[index, 'essentials'] = get_listing_essentials(html_doc)
-            pass
+            listing_info = get_listing_essentials(html_doc)
+            df.loc[index, 'essentials'] = listing_info['essentials']
+            for col in new_cols:
+                if col in listing_info:
+                    df.loc[index, col] = listing_info[col]
         else:
             # TODO count errors
             pass
@@ -125,7 +306,9 @@ def follow_listings(df, wait, cache_dir):
 
 def main():
     parser = ArgumentParser(description='BaT price trend')
-    parser.add_argument('-u', type=str, dest='url', required=True, help="full url to page with information")
+    action = parser.add_mutually_exclusive_group(required=True)
+    action.add_argument('-u', type=str, dest='url', help="full url to page with information")
+    action.add_argument('-p', type=str, dest='csv_file', help="only plot the provided csv file")
     parser.add_argument('-o', type=str, dest='output_file', help='(optional) output CSV file')
     parser.add_argument('-sort', type=str, dest='sort_type', help='(optional) sort by (a)mount(default), (d)ate, (s)old/not sold.')
     parser.add_argument('-results-only', action='store_true', help="(optional) don't parse listings")
@@ -136,6 +319,11 @@ def main():
     if args.force_download:
         print("-f NYI")
         sys.exit(-1)
+
+    if args.csv_file:
+        # only plotting.
+        plot_data(args.csv_file, title=args.csv_file, show_essentials=not args.results_only)
+        sys.exit(0)
 
     if args.wait < DEFAULT_WAIT_INTERVAL_SECS:
         args.wait = DEFAULT_WAIT_INTERVAL_SECS
@@ -153,6 +341,7 @@ def main():
         sys.exit(status_code)
 
     soup = BeautifulSoup(html_doc, 'html.parser') 
+    category_title = soup.title.text.strip(' \t\n\r')
     # class="chart" attribute "data-stats" holds all the goodies
     result = soup.findAll("div", {"class": "chart"})
     data_stats = result[0].attrs['data-stats']
@@ -189,7 +378,7 @@ def main():
 
     # outout to csv file        
     df.to_csv(output_file)
-    plot_data(output_file, not args.results_only)
+    plot_data(output_file, title=category_title, show_essentials=not args.results_only)
     print(f'Done: {output_file}')
 
 

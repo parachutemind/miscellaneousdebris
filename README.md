@@ -3,7 +3,7 @@ A mix bag of scripts and tools
 
 ## scripts/bat
 #### trend.py
-Given a BaT car category text or the full URL to such category, sort it by sold/not sold price and generate a CSV file.
+Export BaT model page and associated listing information into a CSV and generate various charts
 
 - Install (requires Python >= 3)
 ```

@@ -5,6 +5,9 @@ A mix bag of scripts and tools
 #### trend.py
 Export BaT model page and associated listing information into a CSV and generate various charts
 
+![BaT Trend Example](https://github.com/parachutemind/miscellaneousdebris/raw/master/scripts/bat/img/batmobile1.png)
+
+
 - Install (requires Python >= 3)
 ```
 > git clone git@github.com:parachutemind/miscellaneousdebris.git

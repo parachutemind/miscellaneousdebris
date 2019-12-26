@@ -6,11 +6,13 @@ import os
 import json
 import time
 import re
+import datetime
+import math
 import pandas as pd
-import plotly.express as px
 
 import plotly.graph_objs as go
 import plotly.offline as po
+import plotly.express as px
 
 from plotly.subplots import make_subplots
 from argparse import ArgumentParser 
@@ -18,7 +20,7 @@ from urllib import parse
 from bs4 import BeautifulSoup
 
 BAT_URL_ROOT = 'https://bringatrailer.com'
-DEFAULT_WAIT_INTERVAL_SECS = 5
+DEFAULT_WAIT_INTERVAL_SECS = 1
 
 sort = {'a': 'amount', 'd': 'timestamp', 's': 'sold'}
 
@@ -84,6 +86,7 @@ def plot_data(file, title, show_essentials=True):
     Defaults to color based on sold/not sold
     """
     csv = pd.read_csv(file)
+    csv = csv.fillna(0)
     hover_data = []
     if show_essentials:
         hover_data = ['essentials']
@@ -102,6 +105,23 @@ def plot_data(file, title, show_essentials=True):
 
     sold = csv.loc[csv.sold == 'Y']
     not_sold = csv.loc[csv.sold == 'N']
+
+    # least square
+    temp = px.scatter(csv, x=sold['timestamp'], y=sold['amount'], trendline='ols')
+    trendline = temp.data[1]
+    trendline.line = dict(color='firebrick')
+    fig.add_trace(trendline,
+        row=1, col=1
+    )
+
+    # locally weighted scatterplot smoothing
+    temp = px.scatter(csv, x=sold['timestamp'], y=sold['amount'], trendline='lowess')
+    trendline = temp.data[1]
+    trendline.line = dict(color='#17becf')
+    fig.add_trace(trendline,
+        row=1, col=1
+    )
+
     fig.add_trace(
         go.Scatter(x=sold['timestamp'], y=sold['amount'],
             mode="markers",
@@ -115,7 +135,7 @@ def plot_data(file, title, show_essentials=True):
         ),
         row=1, col=1
     )
-
+    
     fig.add_trace(
         go.Scatter(x=not_sold['timestamp'], y=not_sold['amount'],
             mode="markers",
@@ -129,7 +149,10 @@ def plot_data(file, title, show_essentials=True):
         ),
         row=1, col=1
     )
-
+    
+    #
+    #  Milage and amount
+    #
     fig.add_trace(
         go.Scatter(x=sold['milage'], y=sold['amount'],
             mode="markers",
@@ -143,7 +166,7 @@ def plot_data(file, title, show_essentials=True):
         ),        
         row=1, col=2
     )
-
+    
     fig.add_trace(
         go.Scatter(x=not_sold['milage'], y=not_sold['amount'],
             mode="markers",
@@ -155,6 +178,22 @@ def plot_data(file, title, show_essentials=True):
             hovertext=not_sold['essentials'],
             legendgroup='not-sold'
         ),        
+        row=1, col=2
+    )
+
+    # least squares linear approx: ols
+    temp = px.scatter(csv, x=sold['milage'], y=sold['amount'], trendline='ols')
+    trendline = temp.data[1]
+    trendline.line = dict(color='firebrick')
+    fig.add_trace(trendline,
+        row=1, col=2
+    )
+
+    # locally weighted scatterplot smoothing
+    temp = px.scatter(csv, x=sold['milage'], y=sold['amount'], trendline='lowess')
+    trendline = temp.data[1]
+    trendline.line = dict(color='#17becf')
+    fig.add_trace(trendline,
         row=1, col=2
     )
 
@@ -170,7 +209,29 @@ def plot_data(file, title, show_essentials=True):
 
     # x-axis labels 
     fig.update_xaxes(title_text="Date", row=1, col=1, showspikes=True)
-    fig.update_xaxes(title_text="Milage", row=1, col=2,showspikes=True)
+    fig.update_xaxes(title_text="Milage", row=1, col=2, showspikes=True)
+            
+
+    min_ts = csv['timestamp'].min()
+    max_ts = csv['timestamp'].max()
+    min_lt = time.localtime(min_ts)
+    max_lt = time.localtime(max_ts)
+    year_range = max_lt.tm_year - min_lt.tm_year
+    step = math.ceil((max_ts - min_ts) / year_range)
+    tsvals = [min_ts]
+    tstext = [min_lt.tm_year]
+    for interval in range(1, year_range+2):
+        tsvals.append(min_ts + (step * interval))
+        tstext.append(f"{min_lt.tm_year+interval}")
+
+    fig.update_layout(
+            xaxis = dict(
+                tickmode = 'array',
+                tickvals = tsvals,
+                ticktext = tstext
+            )
+    )
+
     # y-axis labels
     fig.update_yaxes(title_text="Price", row=1, col=1, showspikes=True)
     fig.update_yaxes(title_text="Price", row=1, col=2, showspikes=True)
@@ -179,7 +240,7 @@ def plot_data(file, title, show_essentials=True):
                       showlegend=True,
                       legend=make_legend())
     
-    fig.show()   
+    fig.show()
 
 def make_legend():
     """
@@ -316,7 +377,7 @@ def main():
     parser.add_argument('-sort', type=str, dest='sort_type', help='(optional) sort by (a)mount(default), (d)ate, (s)old/not sold.')
     parser.add_argument('-results-only', action='store_true', help="(optional) don't parse listings")
     parser.add_argument('-force', action='store_true', dest='force_download', help="(optional) force download, don't use local cached files")
-    parser.add_argument('-wait', type=int, default=2, help=f'(optional) when following listings, wait specified seconds before hitting the next listing. Min and default is {DEFAULT_WAIT_INTERVAL_SECS}')
+    parser.add_argument('-wait', type=int, default=DEFAULT_WAIT_INTERVAL_SECS, help=f'(optional) when following listings, wait specified seconds before hitting the next listing. Min and default is {DEFAULT_WAIT_INTERVAL_SECS}')
 
     args = parser.parse_args()
     if args.force_download:
@@ -359,8 +420,9 @@ def main():
     df = df.append(pd.io.json.json_normalize(not_sold, max_level=1))
 
     # epoch to date
-    df['timestamp'] = pd.to_datetime(df['timestamp'], unit='s')
-    df['timestamp'] = df['timestamp'].dt.strftime('%Y-%m-%d')
+    df.insert(0, 'date', None)
+    df['date'] = pd.to_datetime(df['timestamp'], unit='s')
+    df['date'] = df['date'].dt.strftime('%Y-%m-%d')
 
     # add the "sold" column based on the titlesub string
     df.insert(0, 'sold', None)

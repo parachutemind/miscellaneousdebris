@@ -220,7 +220,7 @@ def plot_data(file, title, show_essentials=True):
     step = math.ceil((max_ts - min_ts) / year_range)
     tsvals = [min_ts]
     tstext = [min_lt.tm_year]
-    for interval in range(1, year_range+2):
+    for interval in range(1, year_range+1):
         tsvals.append(min_ts + (step * interval))
         tstext.append(f"{min_lt.tm_year+interval}")
 
